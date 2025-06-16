@@ -220,5 +220,5 @@ mops test
 
 ## Credits & References
 
-- [Response Verification Standard](https://github.com/dfinity/interface-spec/blob/master/spec/http-gateway-protocol-spec.md#response-verification)
+- [Response Verification Standard](https://github.com/dfinity/portal/blob/master/docs/references/http-gateway-protocol-spec.md#response-verification)
 - Libraries: [ic-certification](https://github.com/nomeata/ic-certification), [certified-http](https://github.com/infu/certified-http)
