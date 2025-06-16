@@ -29,6 +29,7 @@ module {
     public let Endpoint = EndpointModule.Endpoint;
     public type Endpoint = EndpointModule.Endpoint;
     public type EndpointRecord = EndpointModule.EndpointRecord;
+    public type Settings = Stable.Settings;
 
     public type CertifiedTree = Stable.CertifiedTree;
 
@@ -52,17 +53,17 @@ module {
     /// This instance is stable and will not be cleared on canister upgrade.
     ///
     /// ```motoko
-    /// let cert_store = CertifiedAssets.init_stable_store();
+    /// let cert_store = CertifiedAssets.init_stable_store(null);
     /// let certs = CertifiedAssets.CertifiedAssets(cert_store);
     /// ```
-    public func init_stable_store() : StableStore = Stable.init_stable_store();
+    public func init_stable_store(opt_options : ?Settings) : StableStore = Stable.init_stable_store(opt_options);
 
     /// The implementation of the IC's Response Verification version 2.
     ///
     /// The module provides a way to store the certified data on the heap or in stable persistent memory.
     /// - stable heap - creates a new stable instance of the class that will persist on canister upgrade.
     /// ```motoko
-    /// let cert_store = CertifiedAssets.init_stable_store();
+    /// let cert_store = CertifiedAssets.init_stable_store(null);
     /// let certs = CertifiedAssets.CertifiedAssets(cert_store);
     /// ```
     ///

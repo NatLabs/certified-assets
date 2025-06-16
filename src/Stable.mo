@@ -6,6 +6,7 @@ import Iter "mo:base/Iter";
 import Nat16 "mo:base/Nat16";
 import Result "mo:base/Result";
 import Text "mo:base/Text";
+import Option "mo:base/Option";
 
 import MerkleTree "mo:ic-certification/MerkleTree";
 import CertifiedData "mo:base/CertifiedData";
@@ -51,11 +52,6 @@ module Module {
 
     public type MetadataMap = Map<Text, SplitMetadataEndpoints>;
 
-    public type StableStore = {
-        var tree : MerkleTree.Tree;
-        metadata_map : MetadataMap;
-    };
-
     public let Endpoint = EndpointModule.Endpoint;
     public type Endpoint = EndpointModule.Endpoint;
     public type EndpointRecord = EndpointModule.EndpointRecord;
@@ -81,10 +77,35 @@ module Module {
         #NoMatchingEndpointFound : Text;
     };
 
-    public func init_stable_store() : StableStore {
+    public type Settings = {
+        unit_test_mode : ?Bool;
+    };
+
+    public type InternalSettings = {
+        unit_test_mode : Bool;
+    };
+
+    public type StableStore = {
+        var tree : MerkleTree.Tree;
+        metadata_map : MetadataMap;
+        settings : InternalSettings;
+    };
+
+    public let default_settings = {
+        unit_test_mode = ?false;
+    };
+
+    public func to_internal_settings(settings : Settings) : InternalSettings {
+        {
+            unit_test_mode = Option.get(settings.unit_test_mode, false);
+        };
+    };
+
+    public func init_stable_store(opt_settings : ?Settings) : StableStore {
         {
             var tree = MerkleTree.empty();
             metadata_map = Map.new();
+            settings = to_internal_settings(Option.get(opt_settings, default_settings));
         };
     };
 
@@ -333,7 +354,7 @@ module Module {
 
         // v2 certification
         MerkleTreeOps.put(ct, full_expr_path, "");
-        MerkleTreeOps.setCertifiedData(ct);
+        if (not ct.settings.unit_test_mode) MerkleTreeOps.setCertifiedData(ct);
 
         let metadata : Metadata = {
             endpoint = endpoint_record;
@@ -434,7 +455,7 @@ module Module {
         MerkleTreeOps.delete(ct, metadata.full_expr_path);
         MerkleTreeOps.delete(ct, ["http_assets", Text.encodeUtf8(endpoint_record.url)]);
 
-        MerkleTreeOps.setCertifiedData(ct);
+        if (not ct.settings.unit_test_mode) MerkleTreeOps.setCertifiedData(ct);
 
     };
 
@@ -451,7 +472,7 @@ module Module {
             };
         };
 
-        MerkleTreeOps.setCertifiedData(ct);
+        if (not ct.settings.unit_test_mode) MerkleTreeOps.setCertifiedData(ct);
     };
 
     func extract_endpoints_from_endpoints_map(endpoints_map : EndpointsMap) : Iter<EndpointRecord> {
@@ -497,7 +518,7 @@ module Module {
         MerkleTreeOps.delete(ct, ["http_expr"]);
 
         Map.clear(ct.metadata_map);
-        MerkleTreeOps.setCertifiedData(ct);
+        if (not ct.settings.unit_test_mode) MerkleTreeOps.setCertifiedData(ct);
     };
 
     /// Modifies a given response by adding the certificate headers.
@@ -606,7 +627,11 @@ module Module {
     /// Retrieves the certificate tree based on the given keys.
     /// If keys are set to `null`, the entire tree is returned.
     public func get_certified_tree(ct : StableStore, keys : ?[Text]) : Result<CertifiedTree, Text> {
-        let ?certificate = CertifiedData.getCertificate() else {
+        let ?certificate : ?Blob = if (ct.settings.unit_test_mode) {
+            ?"" : ?Blob;
+        } else {
+            CertifiedData.getCertificate();
+        } else {
             return #err("CertifiedData.getCertificate() failed: no data certificate available. \nTry calling this as a query call, if you are calling it as an update call.");
         };
 
@@ -684,7 +709,11 @@ module Module {
 
         let encoded_witness = MerkleTreeOps.encodeWitness(witness);
 
-        let ?certificate = CertifiedData.getCertificate() else {
+        let ?certificate : ?Blob = if (ct.settings.unit_test_mode) {
+            ?"" : ?Blob;
+        } else {
+            CertifiedData.getCertificate();
+        } else {
             return #err("CertifiedData.getCertificate failed. Call this as a query call!");
         };
 
