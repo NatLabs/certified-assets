@@ -1,15 +1,10 @@
 // @testmode wasi
-import Array "mo:base/Array";
-import Debug "mo:base/Debug";
-import Iter "mo:base/Iter";
-import Option "mo:base/Option";
+import Buffer "mo:base/Buffer";
 import Text "mo:base/Text";
-import Order "mo:base/Order";
 
 import { suite; test } "mo:test";
 import CertifiedAssets "../src/Stable";
 import Fuzz "mo:fuzz";
-import Set "mo:map/Set";
 import Itertools "mo:itertools/Iter";
 
 let fuzz = Fuzz.fromSeed(0x1234567890abcdef);
@@ -83,6 +78,26 @@ suite(
         );
 
         test(
+            "Deduplicates endpoints with the same data",
+            func() {
+                let endpoint1 = new_endpoint("/assets/images/logo.png", "", false).response_header("Cache-Control", "max-age=3600");
+
+                certify(endpoint1);
+                certify(endpoint1);
+                certify(endpoint1);
+
+                ignore do ? {
+                    assert get_certified_metadata(endpoint1)!.endpoint == (endpoint1.build());
+                };
+
+                CertifiedAssets.remove(certs, endpoint1);
+
+                assert CertifiedAssets.get_metadata_from_endpoint(certs, endpoint1.build()) == null;
+
+            },
+        );
+
+        test(
             "Delete endpoints with the same URL but different data",
             func() {
 
@@ -130,134 +145,68 @@ suite(
             "Delete endpoints with the same data but different query, request or response headers",
             func() {
 
-                let endpoint1 = new_endpoint("/assets/images/logo.png", "", false).response_header("Cache-Control", "no-cache");
-                let endpoint2 = new_endpoint("/assets/images/logo.png", "", false).response_header("Cache-Control", "no-cache").response_header("Content-Type", "image/png");
+                let cache_control_values = ["no-cache", "max-age=3600"];
+                let content_type_values = ["image/png", "image/jpeg", "image/gif"];
+                let version_values = ["1.0", "2.0", "3.0"];
+                let lang_values = ["en", "fr", "de"];
+                let is_fallback_values = [false, true];
 
-                CertifiedAssets.certify(certs, endpoint1);
-                CertifiedAssets.certify(certs, endpoint2);
+                let endpoints = Buffer.Buffer<CertifiedAssets.EndpointRecord>(500);
 
-                ignore do ? {
-                    assert get_certified_metadata(endpoint1)!.endpoint == (endpoint1.build());
-                    assert get_certified_metadata(endpoint2)!.endpoint == (endpoint2.build());
-                };
+                // Generate all unique combinations
+                for (is_fallback in is_fallback_values.vals()) {
+                    for (has_cache_control in [false, true].vals()) {
+                        for (cache_control in (if (has_cache_control) cache_control_values else [""]).vals()) {
+                            for (has_content_type in [false, true].vals()) {
+                                for (content_type in (if (has_content_type) content_type_values else [""]).vals()) {
+                                    for (has_version in [false, true].vals()) {
+                                        for (version in (if (has_version) version_values else [""]).vals()) {
+                                            for (has_lang in [false, true].vals()) {
+                                                for (lang in (if (has_lang) lang_values else [""]).vals()) {
 
-                CertifiedAssets.remove(certs, endpoint1);
+                                                    let endpoint = new_endpoint("/assets/images/logo.png", "", is_fallback);
 
-                assert CertifiedAssets.get_metadata_from_endpoint(certs, endpoint1.build()) == null;
+                                                    if (has_cache_control) {
+                                                        ignore endpoint.response_header("Cache-Control", cache_control);
+                                                    };
 
-                ignore do ? {
-                    assert get_certified_metadata(endpoint1)!.endpoint == (endpoint2.build());
-                };
+                                                    if (has_content_type) {
+                                                        ignore endpoint.response_header("Content-Type", content_type);
+                                                    };
 
-                CertifiedAssets.remove(certs, endpoint2);
-                assert CertifiedAssets.get_metadata_from_endpoint(certs, endpoint1.build()) == null;
+                                                    if (has_version) {
+                                                        ignore endpoint.query_param("version", version);
+                                                    };
 
-                // Certify in reverse order so that the delete works correctly
-                CertifiedAssets.certify(certs, endpoint2);
-                CertifiedAssets.certify(certs, endpoint1);
+                                                    if (has_lang) {
+                                                        ignore endpoint.query_param("lang", lang);
+                                                    };
 
-                ignore do ? {
-                    assert get_certified_metadata(endpoint1)!.endpoint == (endpoint1.build());
-                    assert get_certified_metadata(endpoint2)!.endpoint == (endpoint2.build());
-                };
+                                                    endpoints.add(endpoint.build());
 
-                CertifiedAssets.remove(certs, endpoint1);
-
-                assert CertifiedAssets.get_metadata_from_endpoint(certs, endpoint1.build()) == null;
-                ignore do ? {
-                    assert get_certified_metadata(endpoint2)!.endpoint == (endpoint2.build());
-                };
-                CertifiedAssets.remove(certs, endpoint2);
-                assert CertifiedAssets.get_metadata_from_endpoint(certs, endpoint2.build()) == null;
-
-            }
-
-        );
-
-        // this test is important because the other endpoint fields are hashed
-        // and the query, request or response headers are stored in the endpoints metadata
-        // to be matched with the http request. The endpoint that matches the request best
-        // is the one that should be returned.
-        test(
-            "Delete endpoints with the same data but different query, request or response headers",
-            func() {
-
-                var endpoints = Array.tabulate(
-                    1000,
-                    func(i : Nat) : CertifiedAssets.EndpointRecord {
-
-                        let endpoint = new_endpoint("/assets/images/logo.png", "", fuzz.bool.random());
-
-                        if (fuzz.bool.random()) {
-                            ignore endpoint.response_header(
-                                "Cache-Control",
-                                if (i % 2 == 0) "no-cache" else "max-age=3600",
-                            );
+                                                };
+                                            };
+                                        };
+                                    };
+                                };
+                            };
                         };
-
-                        if (fuzz.bool.random()) {
-                            ignore endpoint.response_header(
-                                "Content-Type",
-                                fuzz.array.randomValue(["image/png", "image/jpeg", "image/gif"]),
-                            );
-                        };
-
-                        if (fuzz.bool.random()) {
-                            ignore endpoint.query_param(
-                                "version",
-                                fuzz.array.randomValue(["1.0", "2.0", "3.0"]),
-                            );
-                        };
-
-                        if (fuzz.bool.random()) {
-                            ignore endpoint.query_param(
-                                "lang",
-                                fuzz.array.randomValue(["en", "fr", "de"]),
-                            );
-                        };
-
-                        endpoint.build()
-
-                    },
-                );
-
-                func get_unique_endpoint_key(endpoint : CertifiedAssets.EndpointRecord) : Text {
-
-                    let tuple_key_cmp = func(a : (Text, Text), b : (Text, Text)) : Order.Order {
-                        Text.compare(a.0, b.0);
                     };
-
-                    let response_headers = Array.sort(endpoint.response_headers, tuple_key_cmp);
-                    let query_params = Array.sort(endpoint.query_params, tuple_key_cmp);
-
-                    debug_show (response_headers, query_params, endpoint.is_fallback_path);
                 };
 
-                let hash_utils = (
-                    func(endpoint : CertifiedAssets.EndpointRecord) : Nat32 {
-                        Set.hashText(get_unique_endpoint_key(endpoint));
-                    },
-                    func(a : CertifiedAssets.EndpointRecord, b : CertifiedAssets.EndpointRecord) : Bool {
-                        get_unique_endpoint_key(a) == get_unique_endpoint_key(b);
-                    },
-                );
+                // Debug.print("Total unique endpoints: " # debug_show (endpoints.size()));
 
-                // deduplicate endpoints
-                let set = Set.fromIter<CertifiedAssets.EndpointRecord>(endpoints.vals(), hash_utils);
-                endpoints := Set.toArray(set);
-                Debug.print("Unique endpoints: " # debug_show (endpoints.size()));
-
-                // certify endpoint
+                // certify all endpoint
                 for (endpoint in endpoints.vals()) {
                     CertifiedAssets.certify_record(certs, endpoint);
                 };
 
                 for ((i, endpoint) in Itertools.enumerate(endpoints.vals())) {
 
-                    Debug.print("Endpoint " # debug_show i # ": " # debug_show endpoint);
+                    // Debug.print("Endpoint " # debug_show i # ": " # debug_show endpoint);
                     ignore do ? {
                         let endpoint2 = get_certified_metadata_from_record(endpoint)!.endpoint;
-                        Debug.print("Retrieved metadata for endpoint " # debug_show i # ": " # debug_show endpoint2);
+                        // Debug.print("Retrieved metadata for endpoint " # debug_show i # ": " # debug_show endpoint2);
                         assert endpoint2 == endpoint;
                     };
 
@@ -265,7 +214,7 @@ suite(
 
                     ignore do ? {
                         let retrieved_metadata = CertifiedAssets.get_metadata_from_endpoint(certs, endpoint);
-                        Debug.print("Retrieved metadata for endpoint " # debug_show i # ": " # debug_show retrieved_metadata);
+                        // Debug.print("Retrieved metadata for endpoint " # debug_show i # ": " # debug_show retrieved_metadata);
 
                         assert retrieved_metadata == null or retrieved_metadata!.endpoint != endpoint;
                     };

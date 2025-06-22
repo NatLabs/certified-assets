@@ -45,7 +45,7 @@ module {
         get_ic_certificate_expression;
         encode_text_expr_path;
         get_text_expr_path;
-        url_to_encoded_expr_path;
+        url_to_expr_path_tuple;
         http_req_res_to_endpoint;
     } = Stable;
 

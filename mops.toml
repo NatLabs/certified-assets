@@ -4,7 +4,7 @@ description = "A library for certifying assets served via HTTP, ensuring the sec
 repository = "https://github.com/NatLabs/certified-assets"
 version = "0.5.1"
 license = "MIT"
-keywords = [ "assets", "http", "certification" ]
+keywords = ["assets", "http", "certification"]
 
 [dependencies]
 base = "0.14.13"
@@ -22,6 +22,7 @@ test = "2.1.1"
 bench = "1.0.0"
 fuzz = "1.0.0"
 itertools = "0.2.2"
+rep-indy-hash = "0.1.1"
 
 [toolchain]
 wasmtime = "24.0.0"

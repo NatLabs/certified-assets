@@ -7,6 +7,7 @@ import Nat16 "mo:base/Nat16";
 import Result "mo:base/Result";
 import Text "mo:base/Text";
 import Option "mo:base/Option";
+import Int "mo:base/Int";
 
 import MerkleTree "mo:ic-certification/MerkleTree";
 import CertifiedData "mo:base/CertifiedData";
@@ -15,7 +16,6 @@ import HttpParser "mo:http-parser";
 import HttpTypes "mo:http-types";
 import Serde "mo:serde";
 import Map "mo:map/Map";
-import RepIndyHash "mo:rep-indy-hash";
 import Vector "mo:vector";
 import Itertools "mo:itertools/Iter";
 import RevIter "mo:itertools/RevIter";
@@ -65,17 +65,13 @@ module Module {
         tree : Blob;
     };
 
+    public let IC_CERTIFICATE = "ic-certificate";
     public let IC_CERTIFICATE_EXPRESSION = "ic-certificateexpression";
     public let IC_CERT_BODY = ":ic-cert-body";
     public let IC_CERT_METHOD = ":ic-cert-method";
     public let IC_CERT_QUERY = ":ic-cert-query";
     public let IC_CERT_STATUS = ":ic-cert-status";
     public let IC_IS_FALLBACK = ":ic-is-fallback";
-
-    public type CertifiedAssetErrors = {
-        #GetCertifiedDataFailed : Text;
-        #NoMatchingEndpointFound : Text;
-    };
 
     public type Settings = {
         unit_test_mode : ?Bool;
@@ -156,7 +152,7 @@ module Module {
 
     };
 
-    public func url_to_encoded_expr_path(url : Text, is_fallback : Bool) : ([Blob], Blob) {
+    public func url_to_expr_path_tuple(url : Text, is_fallback : Bool) : ([Blob], Blob) {
 
         let text_expr_path = get_text_expr_path(url, is_fallback);
 
@@ -243,7 +239,7 @@ module Module {
 
         if (not no_request_certification and not no_certification) {
 
-            let buffer = Buffer.Buffer<(Text, RepIndyHash.Value)>(8);
+            let buffer = Buffer.Buffer<(Text, Serde.Candid)>(8);
 
             for ((name, value) in request_headers.vals()) {
                 if (value.size() != 0) {
@@ -262,11 +258,11 @@ module Module {
             let hashed_query_params = SHA256.fromBlob(#sha256, Text.encodeUtf8(concatenated_query_params));
             buffer.add((IC_CERT_QUERY, #Blob(hashed_query_params)));
 
-            let rep_val = #Map(Buffer.toArray(buffer));
-            let request_header_hash = RepIndyHash.hash_val(rep_val);
+            let rep_val = #Record(Buffer.toArray(buffer));
+            let request_header_hash = Serde.Candid.repIndyHash(rep_val);
 
             let request_body_hash : Blob = SHA256.fromBlob(#sha256, ""); // the body is empty because this is expected to be either a GET, HEAD or OPTIONS requests
-            request_hash := SHA256.fromArray(#sha256, Array.append(request_header_hash, Blob.toArray(request_body_hash)));
+            request_hash := SHA256.fromArray(#sha256, Array.append(Blob.toArray(request_header_hash), Blob.toArray(request_body_hash)));
         };
 
         request_hash
@@ -285,10 +281,10 @@ module Module {
 
         if (not no_certification) {
 
-            let buffer = Buffer.Buffer<(Text, RepIndyHash.Value)>(8);
+            let buffer = Buffer.Buffer<(Text, Serde.Candid)>(8);
 
             for ((name, value) in response_headers.vals()) {
-                if (value.size() != 0 and Text.toLowercase(name) != "ic-certificate") {
+                if (value.size() != 0 and Text.toLowercase(name) != IC_CERTIFICATE) {
                     buffer.add((Text.toLowercase(name), #Text(value)));
                 };
             };
@@ -297,11 +293,11 @@ module Module {
 
             buffer.add((IC_CERT_STATUS, #Nat(Nat16.toNat(status))));
 
-            let rep_val = #Map(Buffer.toArray(buffer));
-            let response_headers_hash = RepIndyHash.hash_val(rep_val);
+            let rep_val = #Record(Buffer.toArray(buffer));
+            let response_headers_hash = Serde.Candid.repIndyHash(rep_val);
 
             let headers_and_body_hash = Array.append(
-                response_headers_hash,
+                Blob.toArray(response_headers_hash),
                 Blob.toArray(body_hash),
             );
 
@@ -317,7 +313,7 @@ module Module {
         MerkleTreeOps.put(ct, ["http_assets", Text.encodeUtf8(endpoint_record.url)], endpoint_record.hash);
 
         // start v2 certification
-        let (expr_path, encoded_expr_path) = url_to_encoded_expr_path(endpoint_record.url, endpoint_record.is_fallback_path);
+        let (expr_path, encoded_expr_path) = url_to_expr_path_tuple(endpoint_record.url, endpoint_record.is_fallback_path);
 
         let no_certification = endpoint_record.no_certification;
         let no_request_certification = endpoint_record.no_request_certification;
@@ -363,7 +359,7 @@ module Module {
             ic_certificate_expression;
         };
 
-        let buffer = Buffer.Buffer<(Text, RepIndyHash.Value)>(3);
+        let buffer = Buffer.Buffer<(Text, Serde.Candid)>(3);
 
         // this is not an official field, but it is used internally to uniquely identify the http request
         buffer.add((IC_CERT_BODY, #Blob(endpoint_record.hash)));
@@ -376,7 +372,7 @@ module Module {
             buffer.add((IC_CERT_METHOD, #Text(endpoint_record.method)));
         };
 
-        let unique_http_hash = Blob.fromArray(RepIndyHash.hash_val(#Map(Buffer.toArray(buffer))));
+        let unique_http_hash = (Serde.Candid.repIndyHash(#Record(Buffer.toArray(buffer))));
 
         let split_endpoints = Map.get(ct.metadata_map, thash, endpoint_record.url);
 
@@ -406,14 +402,16 @@ module Module {
             };
         };
 
+        let endpoint_params_cache = get_endpoint_params_cache(endpoint_record);
+
         switch (opt_vector) {
             case (null) {
                 let vector = Vector.new<Metadata>();
                 Vector.add(vector, metadata);
                 ignore Map.put(nested_map, bhash, unique_http_hash, vector);
             };
-            case (?(vector)) switch (get_metadata_index_from_vector(endpoint_record, vector)) {
-                case (?(_, index)) { Vector.put(vector, index, metadata) };
+            case (?(vector)) switch (get_metadata_index_from_vector(endpoint_record, vector, endpoint_params_cache)) {
+                case (?(index)) { Vector.put(vector, index, metadata) };
                 case (null) { Vector.add(vector, metadata) };
             };
         };
@@ -673,7 +671,7 @@ module Module {
         let #ok({ certificate; tree }) = result else return Utils.send_error(result);
 
         return #ok([(
-            "ic-certificate",
+            IC_CERTIFICATE,
             "certificate=:" # base64(certificate) # ":, " # "tree=:" # base64(tree) # ":",
         )]);
     };
@@ -681,12 +679,12 @@ module Module {
     func v2(ct : StableStore, req : HttpTypes.Request, res : HttpTypes.Response, opt_response_hash : ?Blob, paths_to_include_in_witness : [(Text, Bool)]) : Result<[HttpTypes.Header], Text> {
 
         let endpoint = http_req_res_to_endpoint(req, res, opt_response_hash);
+        let endpoint_record = endpoint.build();
 
-        let metadata = switch (get_metadata_from_endpoint(ct, endpoint.build())) {
+        let metadata = switch (get_metadata_from_endpoint(ct, endpoint_record)) {
             case (?metadata) metadata;
             case (null) {
-                ignore endpoint.is_fallback_path(true);
-                switch (get_metadata_from_endpoint(ct, endpoint.build())) {
+                switch (get_metadata_from_endpoint(ct, { endpoint_record with is_fallback_path = true })) {
                     case (?metadata) metadata;
                     case (null) return #err("no metadata found for this url");
                 };
@@ -725,7 +723,7 @@ module Module {
         ];
 
         return #ok([
-            ("ic-certificate", Text.join(", ", ic_certificate_fields.vals())),
+            (IC_CERTIFICATE, Text.join(", ", ic_certificate_fields.vals())),
             (IC_CERTIFICATE_EXPRESSION, metadata.ic_certificate_expression),
         ]);
     };
@@ -771,6 +769,34 @@ module Module {
         index : Nat;
     };
 
+    public type EndpointParamsCache = {
+        request_headers : Map.Map<Text, Text>;
+        response_headers : Map.Map<Text, Text>;
+        query_params : Map.Map<Text, Text>;
+    };
+
+    public func get_endpoint_params_cache(endpoint_record : EndpointRecord) : EndpointParamsCache {
+        let endpoint_params_cache : EndpointParamsCache = {
+            request_headers = Map.new();
+            response_headers = Map.new();
+            query_params = Map.new();
+        };
+
+        for ((name, value) in endpoint_record.request_headers.vals()) {
+            ignore Map.put(endpoint_params_cache.request_headers, Map.thash, name, value);
+        };
+
+        for ((name, value) in endpoint_record.response_headers.vals()) {
+            ignore Map.put(endpoint_params_cache.response_headers, Map.thash, name, value);
+        };
+
+        for ((name, value) in endpoint_record.query_params.vals()) {
+            ignore Map.put(endpoint_params_cache.query_params, Map.thash, name, value);
+        };
+
+        endpoint_params_cache;
+    };
+
     public func get_metadata_index_from_endpoint(ct : StableStore, endpoint_record : EndpointRecord) : ?GetMetadataResponse {
 
         let endpoints_map = switch (Map.get(ct.metadata_map, thash, endpoint_record.url)) {
@@ -782,17 +808,19 @@ module Module {
             case (null) return null;
         };
 
-        let buffer = Buffer.Buffer<(Text, RepIndyHash.Value)>(3);
+        let endpoint_params_cache = get_endpoint_params_cache(endpoint_record);
+
+        let buffer = Buffer.Buffer<(Text, Serde.Candid)>(3);
         // first check for no certification hash (occurs when only the body is certified)
         buffer.add((IC_CERT_BODY, #Blob(endpoint_record.hash)));
 
-        let no_certification_hash = Blob.fromArray(RepIndyHash.hash_val(#Map(Buffer.toArray(buffer))));
+        let no_certification_hash = (Serde.Candid.repIndyHash(#Record(Buffer.toArray(buffer))));
 
         switch (Map.get(endpoints_map, bhash, no_certification_hash)) {
             case (?vec) {
-                let opt_index = get_metadata_index_from_vector(endpoint_record, vec);
+                let opt_index = get_metadata_index_from_vector(endpoint_record, vec, endpoint_params_cache);
                 switch (opt_index) {
-                    case (?(vec, index)) return ?({
+                    case (?(index)) return ?({
                         endpoints_map;
                         endpoint_unique_key = no_certification_hash;
                         endpoint_variants = vec;
@@ -807,13 +835,13 @@ module Module {
         // if empty, check for only response certification
 
         buffer.add((IC_CERT_STATUS, #Nat(Nat16.toNat(endpoint_record.status))));
-        let no_request_certification_hash = Blob.fromArray(RepIndyHash.hash_val(#Map(Buffer.toArray(buffer))));
+        let no_request_certification_hash = (Serde.Candid.repIndyHash(#Record(Buffer.toArray(buffer))));
 
         switch (Map.get(endpoints_map, bhash, no_request_certification_hash)) {
             case (?vec) {
-                let opt_index = get_metadata_index_from_vector(endpoint_record, vec);
+                let opt_index = get_metadata_index_from_vector(endpoint_record, vec, endpoint_params_cache);
                 switch (opt_index) {
-                    case (?(vec, index)) return ?({
+                    case (?(index)) return ?({
                         endpoints_map;
                         endpoint_unique_key = no_request_certification_hash;
                         endpoint_variants = vec;
@@ -828,13 +856,13 @@ module Module {
         // if empty, check for full certification
 
         buffer.add((IC_CERT_METHOD, #Text(endpoint_record.method)));
-        let unique_http_hash = Blob.fromArray(RepIndyHash.hash_val(#Map(Buffer.toArray(buffer))));
+        let unique_http_hash = (Serde.Candid.repIndyHash(#Record(Buffer.toArray(buffer))));
 
         switch (Map.get(endpoints_map, bhash, unique_http_hash)) {
             case (?vec) {
-                let opt_index = get_metadata_index_from_vector(endpoint_record, vec);
+                let opt_index = get_metadata_index_from_vector(endpoint_record, vec, endpoint_params_cache);
                 switch (opt_index) {
-                    case (?(vec, index)) return ?({
+                    case (?(index)) return ?({
                         endpoints_map;
                         endpoint_unique_key = unique_http_hash;
                         endpoint_variants = vec;
@@ -850,46 +878,58 @@ module Module {
 
     };
 
-    func array_contains_all<A>(haystack : [A], needles : [A], eq : (A, A) -> Bool) : Bool {
-        var contains_all = true;
+    func map_contains_all(haystack : Map<Text, Text>, needles : [(Text, Text)]) : Bool {
 
-        label loop1 for (x in needles.vals()) {
-            var found_match = false;
-
-            label loop2 for (y in haystack.vals()) {
-                if (eq(x, y)) {
-                    found_match := true;
-                    break loop2;
-                };
+        for ((k, v) in needles.vals()) {
+            if (Map.get(haystack, thash, k) != ?v) {
+                return false;
             };
-
-            contains_all := contains_all and found_match;
-
-            if (not contains_all) return false;
         };
 
-        contains_all;
+        return true;
+
     };
 
-    public func get_metadata_index_from_vector(endpoint_record : EndpointRecord, metadata_array : Vector<Metadata>) : ?(Vector<Metadata>, Nat) {
+    /// Returns the index of the metadata with the best matching endpoint record.
+    public func get_metadata_index_from_vector(endpoint_record : EndpointRecord, metadata_array : Vector<Metadata>, endpoint_params_cache : EndpointParamsCache) : ?(Nat) {
+
+        let endpoint_total_params = endpoint_record.request_headers.size() + endpoint_record.response_headers.size() + endpoint_record.query_params.size();
+
+        var opt_best_match : ?(Nat, Nat) = null;
+
         var i = 0;
-        for (metadata in Vector.vals(metadata_array)) {
+        while (i < Vector.size(metadata_array)) {
+            let metadata = Vector.get(metadata_array, i);
             var check = true;
 
-            func equal_tuples(a : (Text, Text), b : (Text, Text)) : Bool {
-                a.0 == b.0 and a.1 == b.1
+            check := check and map_contains_all(endpoint_params_cache.request_headers, metadata.endpoint.request_headers);
+            check := check and map_contains_all(endpoint_params_cache.response_headers, metadata.endpoint.response_headers);
+            check := check and map_contains_all(endpoint_params_cache.query_params, metadata.endpoint.query_params);
+
+            let curr_total_params = metadata.endpoint.request_headers.size() + metadata.endpoint.response_headers.size() + metadata.endpoint.query_params.size();
+
+            if (check) switch (opt_best_match) {
+                case (null) {
+                    opt_best_match := ?(i, curr_total_params);
+                };
+                case (?(_best_match_index, best_match_total_params)) {
+                    let curr_diff = Int.abs(curr_total_params - endpoint_total_params);
+                    let best_match_diff = Int.abs(best_match_total_params - endpoint_total_params);
+
+                    if (curr_diff < best_match_diff) {
+                        opt_best_match := ?(i, curr_total_params);
+                    };
+                };
             };
-
-            check := check and array_contains_all(endpoint_record.request_headers, metadata.endpoint.request_headers, equal_tuples);
-            check := check and array_contains_all(endpoint_record.response_headers, metadata.endpoint.response_headers, equal_tuples);
-            check := check and array_contains_all(endpoint_record.query_params, metadata.endpoint.query_params, equal_tuples);
-
-            if (check) return ?(metadata_array, i);
 
             i += 1;
         };
 
-        return null;
+        switch (opt_best_match) {
+            case (?(i, _)) ?(i);
+            case (null) null;
+        };
+
     };
 
     func base64(data : Blob) : Text {

@@ -1,11 +1,9 @@
+// @testmode wasi
 import Debug "mo:base/Debug";
 import Iter "mo:base/Iter";
 
 import { suite; test } "mo:test";
 import CertifiedAssets "../src/Stable";
-import Fuzz "mo:fuzz";
-
-let fuzz = Fuzz.Fuzz();
 
 func get_endpoint(url : Text, is_fallback : Bool) : CertifiedAssets.Endpoint {
     let content : Blob = "Hello, World!";
