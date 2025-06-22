@@ -14,7 +14,7 @@ func get_endpoint(url : Text, is_fallback : Bool) : CertifiedAssets.Endpoint {
     return CertifiedAssets.Endpoint(url, ?content).response_header("Content-Type", "text/html").no_request_certification().is_fallback_path(is_fallback);
 };
 
-func certify(ct : CertifiedAssets.StableStore, (url, is_fallback) : (Text, Bool)) {
+func certify(ct : CertifiedAssets.StableStore, url : Text, is_fallback : Bool) {
     let endpoint = get_endpoint(url, is_fallback);
 
     CertifiedAssets.certify(ct, endpoint);
@@ -33,7 +33,7 @@ func verify_expr_path(ct : CertifiedAssets.StableStore, (url, is_fallback) : (Te
 
 let certs = CertifiedAssets.init_stable_store(
     ?{
-        unit_test_mode = true;
+        unit_test_mode = ?true;
     }
 );
 
@@ -44,17 +44,17 @@ suite(
             "Certify endpoints, get metadata and verify encoded expression path",
             func() {
 
-                certify(certs, ("/index.html", false));
-                certify(certs, ("/", false));
-                certify(certs, ("", false));
+                certify(certs, "/index.html", false);
+                certify(certs, "/", false);
+                certify(certs, "", false);
 
                 assert verify_expr_path(certs, ("/index.html", false), ["http_expr", "index.html", "<$>"]);
                 assert verify_expr_path(certs, ("/", false), ["http_expr", "", "<$>"]);
                 assert verify_expr_path(certs, ("", false), ["http_expr", "<$>"]);
 
-                certify(certs, ("/index.html", true));
-                certify(certs, ("/", true));
-                certify(certs, ("", true));
+                certify(certs, "/index.html", true);
+                certify(certs, "/", true);
+                certify(certs, "", true);
 
                 assert verify_expr_path(certs, ("/index.html", true), ["http_expr", "index.html", "<*>"]);
                 assert verify_expr_path(certs, ("/", true), ["http_expr", "", "<*>"]);
@@ -65,12 +65,12 @@ suite(
                 assert verify_expr_path(certs, ("/", false), ["http_expr", "", "<$>"]);
                 assert verify_expr_path(certs, ("", false), ["http_expr", "<$>"]);
 
-                certify(certs, ("/example/async/index.html", false));
-                certify(certs, ("/example/async/index", false));
-                certify(certs, ("/example/async/", false));
-                certify(certs, ("/example/async", false));
-                certify(certs, ("/example/", false));
-                certify(certs, ("/example", false));
+                certify(certs, "/example/async/index.html", false);
+                certify(certs, "/example/async/index", false);
+                certify(certs, "/example/async/", false);
+                certify(certs, "/example/async", false);
+                certify(certs, "/example/", false);
+                certify(certs, "/example", false);
 
                 assert verify_expr_path(certs, ("/example/async/index.html", false), ["http_expr", "example", "async", "index.html", "<$>"]);
                 assert verify_expr_path(certs, ("/example/async/index", false), ["http_expr", "example", "async", "index", "<$>"]);
@@ -79,7 +79,7 @@ suite(
                 assert verify_expr_path(certs, ("/example/", false), ["http_expr", "example", "", "<$>"]);
                 assert verify_expr_path(certs, ("/example", false), ["http_expr", "example", "<$>"]);
 
-                certify(certs, ("/example/async/", true));
+                certify(certs, "/example/async/", true);
 
                 assert verify_expr_path(certs, ("/example/async/", true), ["http_expr", "example", "async", "", "<*>"]);
 

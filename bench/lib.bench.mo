@@ -115,7 +115,7 @@ module {
         let fuzz = Fuzz.Fuzz();
         let sha256 = Sha256.Digest(#sha256);
         let limit = 1000;
-        let cert_store = CertifiedAssets.init_stable_store();
+        let cert_store = CertifiedAssets.init_stable_store(null);
         let certs = CertifiedAssets.CertifiedAssets(cert_store);
         let endpoint_records = Buffer.Buffer<(CertifiedAssets.EndpointRecord)>(limit);
         let endpoint_bodies = Buffer.Buffer<(Blob)>(limit);

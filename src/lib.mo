@@ -23,7 +23,7 @@ module {
     public type Header = Stable.Header;
 
     public type StableStore = Stable.StableStore;
-
+    public type Metadata = Stable.Metadata;
     public type MetadataMap = Stable.MetadataMap;
 
     public let Endpoint = EndpointModule.Endpoint;

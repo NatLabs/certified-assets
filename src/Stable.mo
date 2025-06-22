@@ -36,7 +36,7 @@ module Module {
     let { thash; bhash } = Map;
     let { CBOR } = Serde;
 
-    type Metadata = {
+    public type Metadata = {
         endpoint : EndpointRecord;
         encoded_expr_path : Blob;
         full_expr_path : [Blob];

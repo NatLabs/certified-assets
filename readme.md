@@ -17,6 +17,9 @@ A library designed to certify assets served via HTTP on the Internet Computer. T
 mops install certified-assets
 ```
 
+> Requires `moc` v0.14.9 or later.
+> use `mops toolchain use moc 0.14.9` to set the toolchain version.
+
 ### Usage
 
 To begin using Certified Assets, import the module into your project:
