@@ -23,6 +23,7 @@ bench = "1.0.0"
 fuzz = "1.0.0"
 itertools = "0.2.2"
 rep-indy-hash = "0.1.1"
+certified-assets-v0_5_1 = "https://github.com/NatLabs/certified-assets#v0.5.1@9ae316b8ec09a1e6d9ea1770cd0980d36297f74b"
 
 [toolchain]
 wasmtime = "24.0.0"

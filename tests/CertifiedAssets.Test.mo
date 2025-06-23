@@ -17,13 +17,14 @@ import RepIndyHash "mo:rep-indy-hash";
 import { suite; test } "mo:test";
 
 import CertifiedAssets "../src";
+
 import {
     MerkleTreeOps;
     IC_CERT_METHOD;
     IC_CERT_QUERY;
     IC_CERTIFICATE_EXPRESSION;
     IC_CERT_STATUS;
-} "../src/Stable";
+} "../src/Base";
 
 type Result<T, E> = Result.Result<T, E>;
 
@@ -85,7 +86,7 @@ func encode_expr_path(paths : [Text]) : Text {
 };
 
 func get_witness(full_expr_path : [Blob]) : Text {
-    let witness = MerkleTreeOps.reveal(sstore, full_expr_path);
+    let witness = MerkleTreeOps.reveal(CertifiedAssets.get_internal_state(sstore), full_expr_path);
     let encoded_witness = MerkleTreeOps.encodeWitness(witness);
 
     ":" # to_base64(encoded_witness) # ":";

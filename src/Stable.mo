@@ -24,6 +24,9 @@ import Base64 "mo:encoding/Base64";
 
 import Utils "Utils";
 import EndpointModule "Endpoint";
+import Base "Base";
+import Migrations "Migrations";
+import T "Types";
 
 module Module {
 
@@ -52,6 +55,9 @@ module Module {
 
     public type MetadataMap = Map<Text, SplitMetadataEndpoints>;
 
+    public type VersionedStableStore = Migrations.VersionedStableStore;
+    public type StableStore = Base.StableStore;
+
     public let Endpoint = EndpointModule.Endpoint;
     public type Endpoint = EndpointModule.Endpoint;
     public type EndpointRecord = EndpointModule.EndpointRecord;
@@ -73,94 +79,41 @@ module Module {
     public let IC_CERT_STATUS = ":ic-cert-status";
     public let IC_IS_FALLBACK = ":ic-is-fallback";
 
-    public type Settings = {
-        unit_test_mode : ?Bool;
+    public type Settings = Base.Settings;
+    public type InternalSettings = Base.InternalSettings;
+    public type EndpointParamsCache = Base.EndpointParamsCache;
+
+    public let {
+        default_settings;
+        to_internal_settings;
+    } = Base;
+
+    public func init_stable_store(opt_settings : ?Settings) : VersionedStableStore {
+        Migrations.share_version(Base.init_stable_store(opt_settings));
     };
 
-    public type InternalSettings = {
-        unit_test_mode : Bool;
+    public func get_internal_state(ct : VersionedStableStore) : StableStore {
+        Migrations.get_current_state(ct);
     };
 
-    public type StableStore = {
-        var tree : MerkleTree.Tree;
-        metadata_map : MetadataMap;
-        settings : InternalSettings;
+    public func upgrade(ct : VersionedStableStore) : VersionedStableStore {
+        Migrations.upgrade(ct);
     };
 
-    public let default_settings = {
-        unit_test_mode = ?false;
-    };
-
-    public func to_internal_settings(settings : Settings) : InternalSettings {
-        {
-            unit_test_mode = Option.get(settings.unit_test_mode, false);
-        };
-    };
-
-    public func init_stable_store(opt_settings : ?Settings) : StableStore {
-        {
-            var tree = MerkleTree.empty();
-            metadata_map = Map.new();
-            settings = to_internal_settings(Option.get(opt_settings, default_settings));
-        };
-    };
-
-    public func certify(ct : StableStore, endpoint : Endpoint) {
-        let endpoint_record = endpoint.build();
-        certify_record(ct, endpoint_record);
+    public func certify(ct : VersionedStableStore, endpoint : Endpoint) {
+        Base.certify(Migrations.get_current_state(ct), endpoint);
     };
 
     public func encode_text_expr_path(text_expr_path : [Text]) : Blob {
-        let candid_record_expr_path = #Array(
-            Array.map(text_expr_path, func(t : Text) : Serde.Candid = #Text(t))
-        );
-
-        let cbor_res = CBOR.fromCandid(candid_record_expr_path, Serde.defaultOptions);
-        switch (cbor_res) {
-            case (#ok(encoded_expr_path)) encoded_expr_path;
-            case (#err(errMsg)) Debug.trap("Internal Error: Report bug in NatLabs/certified-assets repo.\n\t" # errMsg);
-        };
+        Base.encode_text_expr_path(text_expr_path);
     };
 
     public func get_text_expr_path(url : Text, is_fallback : Bool) : [Text] {
-
-        let paths = if (url == "") {
-            [];
-        } else if (url == "/") {
-            [""];
-        } else {
-            let paths_iter = Text.split(url, #text("/"));
-            ignore paths_iter.next(); // skip the first element which is always empty
-            Iter.toArray(paths_iter);
-        };
-
-        let text_expr_path = Array.tabulate(
-            paths.size() + 2,
-            func(i : Nat) : Text {
-                if (i == 0) return "http_expr";
-                if (i < paths.size() + 1) return paths[i - 1];
-
-                if (is_fallback) {
-                    "<*>";
-                } else {
-                    "<$>";
-                };
-            },
-        );
-
-        text_expr_path;
-
+        Base.get_text_expr_path(url, is_fallback);
     };
 
     public func url_to_expr_path_tuple(url : Text, is_fallback : Bool) : ([Blob], Blob) {
-
-        let text_expr_path = get_text_expr_path(url, is_fallback);
-
-        let expr_path = Array.map(text_expr_path, Text.encodeUtf8);
-        let encoded_expr_path = encode_text_expr_path(text_expr_path);
-
-        (expr_path, encoded_expr_path);
-
+        Base.url_to_expr_path_tuple(url, is_fallback);
     };
 
     public func get_ic_certificate_expression(
@@ -170,61 +123,13 @@ module Module {
         request_headers : [HttpTypes.Header],
         response_headers : [HttpTypes.Header],
     ) : Text {
-        let extract_field = func((field, _) : (Text, Text)) : Text = field;
-
-        let query_params_fields = Array.map(query_params, extract_field);
-        let request_headers_fields = Array.map(request_headers, extract_field);
-        let response_headers_fields = Array.map(response_headers, extract_field);
-
-        var ic_certificate_expression = switch (no_certification, no_request_certification) {
-            case (true, _) {
-                "
-                    default_certification (
-                        ValidationArgs {
-                            no_certification: Empty { }
-                        }
-                    )
-                ";
-            };
-            case (false, true) {
-                "
-                    default_certification (
-                        ValidationArgs {
-                            certification: Certification {
-                                no_request_certification: Empty { },
-                                response_certification: ResponseCertification {
-                                    certified_response_headers: ResponseHeaderList {
-                                        headers: " # debug_show response_headers_fields # "
-                                    }
-                                }
-                            }
-                        }
-                    )
-                ";
-            };
-            case (false, false) {
-                "
-                    default_certification (
-                        ValidationArgs {
-                            certification: Certification {
-                                request_certification: RequestCertification {
-                                    certified_request_headers: " # debug_show request_headers_fields # ",
-                                    certified_query_parameters: " # debug_show query_params_fields # "
-                                },
-                                response_certification: ResponseCertification {
-                                    certified_response_headers: ResponseHeaderList {
-                                        headers: " # debug_show response_headers_fields # "
-                                    }
-                                }
-                            }
-                        }
-                    )
-                ";
-            };
-        };
-
-        Text.join(" ", Text.tokens(ic_certificate_expression, #predicate(func(c : Char) : Bool = c == ' ' or c == '\n')));
-
+        Base.get_ic_certificate_expression(
+            no_certification,
+            no_request_certification,
+            query_params,
+            request_headers,
+            response_headers,
+        );
     };
 
     public func get_request_hash(
@@ -234,39 +139,13 @@ module Module {
         query_params : [(Text, Text)],
         request_headers : [HttpTypes.Header],
     ) : Blob {
-
-        var request_hash : Blob = "";
-
-        if (not no_request_certification and not no_certification) {
-
-            let buffer = Buffer.Buffer<(Text, Serde.Candid)>(8);
-
-            for ((name, value) in request_headers.vals()) {
-                if (value.size() != 0) {
-                    buffer.add((Text.toLowercase(name), #Text(value)));
-                };
-            };
-
-            buffer.add((IC_CERT_METHOD, #Text(method)));
-
-            let query_params_key_value_pair = Iter.map<(Text, Text), Text>(
-                query_params.vals(),
-                func(name : Text, value : Text) : Text { (name # "=" # value) },
-            );
-
-            let concatenated_query_params = Text.join("&", query_params_key_value_pair);
-            let hashed_query_params = SHA256.fromBlob(#sha256, Text.encodeUtf8(concatenated_query_params));
-            buffer.add((IC_CERT_QUERY, #Blob(hashed_query_params)));
-
-            let rep_val = #Record(Buffer.toArray(buffer));
-            let request_header_hash = Serde.Candid.repIndyHash(rep_val);
-
-            let request_body_hash : Blob = SHA256.fromBlob(#sha256, ""); // the body is empty because this is expected to be either a GET, HEAD or OPTIONS requests
-            request_hash := SHA256.fromArray(#sha256, Array.append(Blob.toArray(request_header_hash), Blob.toArray(request_body_hash)));
-        };
-
-        request_hash
-
+        Base.get_request_hash(
+            no_certification,
+            no_request_certification,
+            method,
+            query_params,
+            request_headers,
+        );
     };
 
     public func get_response_hash(
@@ -276,710 +155,99 @@ module Module {
         response_headers : [HttpTypes.Header],
         ic_certificate_expression : Text,
     ) : Blob {
-
-        var response_hash : Blob = "";
-
-        if (not no_certification) {
-
-            let buffer = Buffer.Buffer<(Text, Serde.Candid)>(8);
-
-            for ((name, value) in response_headers.vals()) {
-                if (value.size() != 0 and Text.toLowercase(name) != IC_CERTIFICATE) {
-                    buffer.add((Text.toLowercase(name), #Text(value)));
-                };
-            };
-
-            buffer.add(IC_CERTIFICATE_EXPRESSION, #Text(ic_certificate_expression));
-
-            buffer.add((IC_CERT_STATUS, #Nat(Nat16.toNat(status))));
-
-            let rep_val = #Record(Buffer.toArray(buffer));
-            let response_headers_hash = Serde.Candid.repIndyHash(rep_val);
-
-            let headers_and_body_hash = Array.append(
-                Blob.toArray(response_headers_hash),
-                Blob.toArray(body_hash),
-            );
-
-            response_hash := SHA256.fromArray(#sha256, headers_and_body_hash);
-        };
-
-        response_hash;
-
-    };
-
-    public func certify_record(ct : StableStore, endpoint_record : EndpointRecord) {
-        // v1 certification
-        MerkleTreeOps.put(ct, ["http_assets", Text.encodeUtf8(endpoint_record.url)], endpoint_record.hash);
-
-        // start v2 certification
-        let (expr_path, encoded_expr_path) = url_to_expr_path_tuple(endpoint_record.url, endpoint_record.is_fallback_path);
-
-        let no_certification = endpoint_record.no_certification;
-        let no_request_certification = endpoint_record.no_request_certification;
-
-        let ic_certificate_expression = get_ic_certificate_expression(
+        Base.get_response_hash(
             no_certification,
-            no_request_certification,
-            endpoint_record.query_params,
-            endpoint_record.request_headers,
-            endpoint_record.response_headers,
-        );
-
-        let ic_certificate_expression_hash = SHA256.fromBlob(#sha256, Text.encodeUtf8(ic_certificate_expression));
-
-        let request_hash : Blob = get_request_hash(
-            no_certification,
-            no_request_certification,
-            endpoint_record.method,
-            endpoint_record.query_params,
-            endpoint_record.request_headers,
-        );
-
-        let response_hash : Blob = get_response_hash(
-            no_certification,
-            endpoint_record.status,
-            endpoint_record.hash,
-            endpoint_record.response_headers,
+            status,
+            body_hash,
+            response_headers,
             ic_certificate_expression,
         );
-
-        assert (not no_certification) or (no_certification and ((request_hash == "") and (response_hash == "")));
-
-        let full_expr_path = Array.append(expr_path, [ic_certificate_expression_hash, request_hash, response_hash]);
-
-        // v2 certification
-        MerkleTreeOps.put(ct, full_expr_path, "");
-        if (not ct.settings.unit_test_mode) MerkleTreeOps.setCertifiedData(ct);
-
-        let metadata : Metadata = {
-            endpoint = endpoint_record;
-            encoded_expr_path;
-            full_expr_path;
-            ic_certificate_expression;
-        };
-
-        let buffer = Buffer.Buffer<(Text, Serde.Candid)>(3);
-
-        // this is not an official field, but it is used internally to uniquely identify the http request
-        buffer.add((IC_CERT_BODY, #Blob(endpoint_record.hash)));
-
-        if (not no_certification) {
-            buffer.add((IC_CERT_STATUS, #Nat(Nat16.toNat(endpoint_record.status))));
-        };
-
-        if (not no_request_certification and not no_certification) {
-            buffer.add((IC_CERT_METHOD, #Text(endpoint_record.method)));
-        };
-
-        let unique_http_hash = (Serde.Candid.repIndyHash(#Record(Buffer.toArray(buffer))));
-
-        let split_endpoints = Map.get(ct.metadata_map, thash, endpoint_record.url);
-
-        let (nested_map, opt_vector) = switch (split_endpoints) {
-            case (?split_map) {
-                let nested_map = if (endpoint_record.is_fallback_path) {
-                    split_map.fallback_endpoints;
-                } else {
-                    split_map.endpoints;
-                };
-
-                (nested_map, Map.get<Blob, Vector<Metadata>>(nested_map, bhash, unique_http_hash));
-            };
-            case (null) {
-                let split_map = {
-                    fallback_endpoints = Map.new<Blob, Vector<Metadata>>();
-                    endpoints = Map.new<Blob, Vector<Metadata>>();
-                };
-
-                ignore Map.put(ct.metadata_map, thash, endpoint_record.url, split_map);
-
-                if (endpoint_record.is_fallback_path) {
-                    (split_map.fallback_endpoints, null);
-                } else {
-                    (split_map.endpoints, null);
-                };
-            };
-        };
-
-        let endpoint_params_cache = get_endpoint_params_cache(endpoint_record);
-
-        switch (opt_vector) {
-            case (null) {
-                let vector = Vector.new<Metadata>();
-                Vector.add(vector, metadata);
-                ignore Map.put(nested_map, bhash, unique_http_hash, vector);
-            };
-            case (?(vector)) switch (get_metadata_index_from_vector(endpoint_record, vector, endpoint_params_cache)) {
-                case (?(index)) { Vector.put(vector, index, metadata) };
-                case (null) { Vector.add(vector, metadata) };
-            };
-        };
     };
 
-    func vector_remove<A>(vec : Vector<A>, index : Nat) : ?A {
-
-        let size = Vector.size(vec);
-
-        if (size == 0) return null;
-
-        let last_index = size - 1 : Nat;
-
-        if (last_index == index) return Vector.removeLast(vec);
-
-        let tmp = Vector.get(vec, last_index);
-        Vector.put(vec, index, tmp);
-        Vector.removeLast(vec);
+    public func certify_record(ct : VersionedStableStore, endpoint_record : EndpointRecord) {
+        Base.certify_record(Migrations.get_current_state(ct), endpoint_record);
     };
 
     /// Remove a certified EndpointModule.
-    public func remove(ct : StableStore, endpoint : Endpoint) {
-        let endpoint_record = endpoint.build();
-        remove_record(ct, endpoint_record);
+    public func remove(ct : VersionedStableStore, endpoint : Endpoint) {
+        Base.remove(Migrations.get_current_state(ct), endpoint);
     };
 
-    public func remove_record(ct : StableStore, endpoint_record : EndpointRecord) {
-        let ?({
-            endpoints_map;
-            endpoint_unique_key;
-            endpoint_variants;
-            index;
-        }) = get_metadata_index_from_endpoint(ct, endpoint_record) else return;
-
-        let ?metadata = vector_remove(endpoint_variants, index) else return;
-        if (Vector.size(endpoint_variants) == 0) {
-            ignore Map.remove(endpoints_map, bhash, endpoint_unique_key);
-        };
-        MerkleTreeOps.delete(ct, metadata.full_expr_path);
-        MerkleTreeOps.delete(ct, ["http_assets", Text.encodeUtf8(endpoint_record.url)]);
-
-        if (not ct.settings.unit_test_mode) MerkleTreeOps.setCertifiedData(ct);
-
+    public func remove_record(ct : VersionedStableStore, endpoint_record : EndpointRecord) {
+        Base.remove_record(Migrations.get_current_state(ct), endpoint_record);
     };
 
     /// Removes all the certified endpoints that match the given URL.
-    public func remove_all(ct : StableStore, url : Text) {
-        let endpoint = Endpoint(url, null).build();
-        MerkleTreeOps.delete(ct, ["http_assets", Text.encodeUtf8(endpoint.url)]);
-
-        let ?{ fallback_endpoints; endpoints } = Map.remove(ct.metadata_map, thash, endpoint.url) else return;
-
-        for ((_, vector) in Itertools.chain(Map.entries(fallback_endpoints), Map.entries(endpoints))) {
-            for (metadata in Vector.vals(vector)) {
-                MerkleTreeOps.delete(ct, metadata.full_expr_path);
-            };
-        };
-
-        if (not ct.settings.unit_test_mode) MerkleTreeOps.setCertifiedData(ct);
+    public func remove_all(ct : VersionedStableStore, url : Text) {
+        Base.remove_all(Migrations.get_current_state(ct), url);
     };
 
-    func extract_endpoints_from_endpoints_map(endpoints_map : EndpointsMap) : Iter<EndpointRecord> {
-        Itertools.flatten(
-            Iter.map(
-                Map.vals(endpoints_map),
-                func(vector : Vector<Metadata>) : Iter<EndpointRecord> {
-                    Iter.map(
-                        Vector.vals(vector),
-                        func(metadata : Metadata) : EndpointRecord {
-                            metadata.endpoint;
-                        },
-                    );
-                },
-            )
-        );
+    public func endpoints(ct : VersionedStableStore) : Iter<EndpointRecord> {
+        Base.endpoints(Migrations.get_current_state(ct));
     };
 
-    func extract_endpoints_from_split_endpoints_map(split_endpoints : SplitMetadataEndpoints) : Iter<EndpointRecord> {
-        Itertools.chain(
-            extract_endpoints_from_endpoints_map(split_endpoints.fallback_endpoints),
-            extract_endpoints_from_endpoints_map(split_endpoints.endpoints),
-        );
-    };
-
-    public func endpoints(ct : StableStore) : Iter<EndpointRecord> {
-        Itertools.flatten(
-            Iter.map(
-                Map.vals(ct.metadata_map),
-                extract_endpoints_from_split_endpoints_map,
-            )
-        );
-    };
-
-    public func endpoints_by_url(ct : StableStore, url : Text) : Iter<EndpointRecord> {
-        let ?split_endpoints = Map.get(ct.metadata_map, thash, url) else return [].vals();
-        extract_endpoints_from_split_endpoints_map(split_endpoints);
+    public func endpoints_by_url(ct : VersionedStableStore, url : Text) : Iter<EndpointRecord> {
+        Base.endpoints_by_url(Migrations.get_current_state(ct), url);
     };
 
     /// Clear all certified endpoints.
-    public func clear(ct : StableStore) {
-        MerkleTreeOps.delete(ct, ["http_assets"]);
-        MerkleTreeOps.delete(ct, ["http_expr"]);
-
-        Map.clear(ct.metadata_map);
-        if (not ct.settings.unit_test_mode) MerkleTreeOps.setCertifiedData(ct);
+    public func clear(ct : VersionedStableStore) {
+        Base.clear(Migrations.get_current_state(ct));
     };
 
     /// Modifies a given response by adding the certificate headers.
-    public func get_certified_response(ct : StableStore, req : HttpTypes.Request, res : HttpTypes.Response, opt_response_hash : ?Blob) : Result<HttpTypes.Response, Text> {
-        let headers_res = get_certificate(ct, req, res, opt_response_hash);
-        let #ok(headers) = headers_res else return Utils.send_error(headers_res);
-
-        #ok({ res with headers = Array.append(res.headers, headers) });
+    public func get_certified_response(ct : VersionedStableStore, req : HttpTypes.Request, res : HttpTypes.Response, opt_response_hash : ?Blob) : Result<HttpTypes.Response, Text> {
+        Base.get_certified_response(Migrations.get_current_state(ct), req, res, opt_response_hash);
     };
 
     /// Get the certificate headers for a given request.
-    public func get_certificate(ct : StableStore, req : HttpTypes.Request, res : HttpTypes.Response, opt_response_hash : ?Blob) : Result<[HttpTypes.Header], Text> {
-        if (req.certificate_version == ?2) v2(ct, req, res, opt_response_hash, []) else v1(ct, req);
+    public func get_certificate(ct : VersionedStableStore, req : HttpTypes.Request, res : HttpTypes.Response, opt_response_hash : ?Blob) : Result<[HttpTypes.Header], Text> {
+        Base.get_certificate(Migrations.get_current_state(ct), req, res, opt_response_hash);
     };
 
     /// Gets the closest fallback path for the given path that has a certificate associated with it.
-    public func get_fallback_path(ct : StableStore, path : Text) : ?Text {
-
-        let paths = Iter.toArray(Text.split(path, #text("/")));
-
-        for (i in RevIter.range(0, paths.size()).rev()) {
-            let slice = Itertools.fromArraySlice(paths, 0, i);
-            let possible_fallback = Text.join(("/"), slice);
-            let possible_fallback_with_trailing_slash = possible_fallback # "/";
-
-            switch (Map.get(ct.metadata_map, thash, possible_fallback_with_trailing_slash)) {
-                case (?{ fallback_endpoints; endpoints }) {
-                    if (Map.size(fallback_endpoints) > 0) return ?possible_fallback_with_trailing_slash;
-                };
-                case (_) {};
-            };
-
-            switch (Map.get(ct.metadata_map, thash, possible_fallback)) {
-                case (?{ fallback_endpoints; endpoints }) {
-                    if (Map.size(fallback_endpoints) > 0) return ?possible_fallback;
-                };
-                case (_) {};
-            };
-        };
-
-        null;
-
+    public func get_fallback_path(ct : VersionedStableStore, path : Text) : ?Text {
+        Base.get_fallback_path(Migrations.get_current_state(ct), path);
     };
 
     public func get_all_fallback_paths_between_urls(init_start_path : Text, init_end_path : Text) : [Text] {
-        let (start_path, end_path) = if (init_start_path.size() < init_end_path.size()) {
-            (init_start_path, init_end_path);
-        } else {
-            (init_end_path, init_start_path);
-        };
-
-        let ?difference = Text.stripStart(end_path, #text(start_path)) else return [];
-        let differing_paths = Iter.toArray(Text.tokens(difference, #text("/")));
-
-        var curr = start_path;
-        var i = 0;
-        var j = 0;
-
-        let all_paths_between = Buffer.Buffer<Text>(8);
-
-        label building_paths while (Text.startsWith(end_path, #text(curr))) {
-            if (i == 0 and Text.endsWith(curr, #text("/"))) {
-                i += 1;
-                continue building_paths;
-            };
-
-            if (i % 2 == 0) {
-                curr #= "/";
-            } else {
-                curr #= differing_paths[j];
-                j += 1;
-            };
-
-            if (curr == end_path) break building_paths;
-
-            all_paths_between.add(curr);
-
-            i += 1;
-        };
-
-        Buffer.toArray(all_paths_between);
+        Base.get_all_fallback_paths_between_urls(init_start_path, init_end_path);
     };
 
-    public func get_fallback_certificate(ct : StableStore, req : HttpTypes.Request, fallback_path : Text, res : HttpTypes.Response, opt_response_hash : ?Blob) : Result<[HttpTypes.Header], Text> {
-
-        let fallback_req = { req with url = fallback_path };
-
-        // need to proove that the fallbacks in between are not certified
-        let possible_fallback_paths = Array.map<Text, (Text, Bool)>(
-            get_all_fallback_paths_between_urls(req.url, fallback_path),
-            func(url : Text) : (Text, Bool) = (url, true),
-        );
-
-        let url_to_include_in_witness = Array.append([(req.url, false)], possible_fallback_paths);
-
-        if (fallback_req.certificate_version == ?2) v2(ct, fallback_req, res, opt_response_hash, url_to_include_in_witness) else v1(ct, fallback_req);
+    public func get_fallback_certificate(ct : VersionedStableStore, req : HttpTypes.Request, fallback_path : Text, res : HttpTypes.Response, opt_response_hash : ?Blob) : Result<[HttpTypes.Header], Text> {
+        Base.get_fallback_certificate(Migrations.get_current_state(ct), req, fallback_path, res, opt_response_hash);
     };
 
-    public func get_fallback_response(ct : StableStore, req : HttpTypes.Request, fallback_path : Text, res : HttpTypes.Response, opt_response_hash : ?Blob) : Result<HttpTypes.Response, Text> {
-        let headers_res = get_fallback_certificate(ct, req, fallback_path, res, opt_response_hash);
-        let #ok(headers) = headers_res else return Utils.send_error(headers_res);
-
-        #ok({ res with headers = Array.append(res.headers, headers) });
+    public func get_fallback_response(ct : VersionedStableStore, req : HttpTypes.Request, fallback_path : Text, res : HttpTypes.Response, opt_response_hash : ?Blob) : Result<HttpTypes.Response, Text> {
+        Base.get_fallback_response(Migrations.get_current_state(ct), req, fallback_path, res, opt_response_hash);
     };
 
     /// Retrieves the certificate tree based on the given keys.
     /// If keys are set to `null`, the entire tree is returned.
-    public func get_certified_tree(ct : StableStore, keys : ?[Text]) : Result<CertifiedTree, Text> {
-        let ?certificate : ?Blob = if (ct.settings.unit_test_mode) {
-            ?"" : ?Blob;
-        } else {
-            CertifiedData.getCertificate();
-        } else {
-            return #err("CertifiedData.getCertificate() failed: no data certificate available. \nTry calling this as a query call, if you are calling it as an update call.");
-        };
-
-        let vec = Vector.new<[Blob]>();
-
-        let keys_iter : Iter<Text> = switch (keys) {
-            case (?keys) keys.vals();
-            case (null) Map.keys(ct.metadata_map);
-        };
-
-        label for_loop for (key in keys_iter) {
-            // v1 certification
-            Vector.add(vec, ["http_assets", Text.encodeUtf8(key)] : [Blob]);
-
-            let split_endpoints = switch (Map.get(ct.metadata_map, thash, key)) {
-                case (?nested_map) nested_map;
-                case (null) continue for_loop;
-            };
-
-            for (vector in Itertools.chain(Map.vals(split_endpoints.fallback_endpoints), Map.vals(split_endpoints.endpoints))) {
-                for (metadata in Vector.vals(vector)) {
-                    // v2 certification
-                    Vector.add(vec, metadata.full_expr_path);
-                };
-            };
-        };
-
-        let witness = MerkleTreeOps.reveals(ct, Vector.vals(vec));
-        let tree = MerkleTreeOps.encodeWitness(witness);
-
-        #ok({ certificate; tree });
-    };
-
-    func v1(ct : StableStore, req : HttpTypes.Request) : Result<[HttpTypes.Header], Text> {
-        let url = HttpParser.URL(req.url, HttpParser.Headers([]));
-        let url_path = url.path.original;
-
-        let result = get_certified_tree(ct, ?[url_path]);
-        let #ok({ certificate; tree }) = result else return Utils.send_error(result);
-
-        return #ok([(
-            IC_CERTIFICATE,
-            "certificate=:" # base64(certificate) # ":, " # "tree=:" # base64(tree) # ":",
-        )]);
-    };
-
-    func v2(ct : StableStore, req : HttpTypes.Request, res : HttpTypes.Response, opt_response_hash : ?Blob, paths_to_include_in_witness : [(Text, Bool)]) : Result<[HttpTypes.Header], Text> {
-
-        let endpoint = http_req_res_to_endpoint(req, res, opt_response_hash);
-        let endpoint_record = endpoint.build();
-
-        let metadata = switch (get_metadata_from_endpoint(ct, endpoint_record)) {
-            case (?metadata) metadata;
-            case (null) {
-                switch (get_metadata_from_endpoint(ct, { endpoint_record with is_fallback_path = true })) {
-                    case (?metadata) metadata;
-                    case (null) return #err("no metadata found for this url");
-                };
-            };
-        };
-
-        let witness = MerkleTreeOps.reveals(
-            ct,
-            Array.append<[Blob]>(
-                [metadata.full_expr_path],
-                Array.map<(Text, is_fallback : Bool), [Blob]>(
-                    paths_to_include_in_witness,
-                    func(path : Text, is_fallback : Bool) : [Blob] {
-                        let text_expr_path = get_text_expr_path(path, is_fallback);
-                        Array.map(text_expr_path, Text.encodeUtf8);
-                    },
-                ),
-            ).vals(),
-        );
-
-        let encoded_witness = MerkleTreeOps.encodeWitness(witness);
-
-        let ?certificate : ?Blob = if (ct.settings.unit_test_mode) {
-            ?"" : ?Blob;
-        } else {
-            CertifiedData.getCertificate();
-        } else {
-            return #err("CertifiedData.getCertificate failed. Call this as a query call!");
-        };
-
-        let ic_certificate_fields = [
-            "certificate=:" # base64(certificate) # ":",
-            "tree=:" # base64(encoded_witness) # ":",
-            "version=2",
-            "expr_path=:" # base64(metadata.encoded_expr_path) # ":",
-        ];
-
-        return #ok([
-            (IC_CERTIFICATE, Text.join(", ", ic_certificate_fields.vals())),
-            (IC_CERTIFICATE_EXPRESSION, metadata.ic_certificate_expression),
-        ]);
+    public func get_certified_tree(ct : VersionedStableStore, keys : ?[Text]) : Result<CertifiedTree, Text> {
+        Base.get_certified_tree(Migrations.get_current_state(ct), keys);
     };
 
     public func http_req_res_to_endpoint(req : HttpTypes.Request, res : HttpTypes.Response, opt_response_hash : ?Blob) : Endpoint {
-        let endpoint = Endpoint(req.url, null).method(req.method).request_headers(req.headers).response_headers(res.headers).status(res.status_code);
-
-        switch (opt_response_hash) {
-            case (?response_hash) {
-                ignore endpoint.hash(response_hash);
-            };
-            case (null) {
-                ignore endpoint.body(res.body);
-            };
-        };
-
-        endpoint;
-
+        Base.http_req_res_to_endpoint(req, res, opt_response_hash);
     };
 
-    public func get_metadata(ct : StableStore, req : HttpTypes.Request, res : HttpTypes.Response, opt_response_hash : ?Blob) : ?Metadata {
-
-        let endpoint = Endpoint(req.url, null).method(req.method).request_headers(req.headers).response_headers(res.headers).status(res.status_code);
-
-        get_metadata_from_endpoint(ct, endpoint.build());
+    public func get_metadata(ct : VersionedStableStore, req : HttpTypes.Request, res : HttpTypes.Response, opt_response_hash : ?Blob) : ?Metadata {
+        Base.get_metadata(Migrations.get_current_state(ct), req, res, opt_response_hash);
     };
 
-    public func get_metadata_from_endpoint(ct : StableStore, endpoint_record : EndpointRecord) : ?Metadata {
-
-        let opt_index = get_metadata_index_from_endpoint(ct, endpoint_record);
-
-        switch (opt_index) {
-            case (?({ endpoint_variants; index })) ?Vector.get(endpoint_variants, index);
-            case (null) null;
-        };
-
+    public func get_metadata_from_endpoint(ct : VersionedStableStore, endpoint_record : EndpointRecord) : ?Metadata {
+        Base.get_metadata_from_endpoint(Migrations.get_current_state(ct), endpoint_record);
     };
 
-    public type GetMetadataResponse = {
-        endpoints_map : EndpointsMap;
-        endpoint_unique_key : Blob;
-        endpoint_variants : Vector<Metadata>;
-        index : Nat;
+    public type GetMetadataResponse = Base.GetMetadataResponse;
+
+    public func get_metadata_index_from_endpoint(ct : VersionedStableStore, endpoint_record : EndpointRecord) : ?GetMetadataResponse {
+        Base.get_metadata_index_from_endpoint(Migrations.get_current_state(ct), endpoint_record);
     };
 
-    public type EndpointParamsCache = {
-        request_headers : Map.Map<Text, Text>;
-        response_headers : Map.Map<Text, Text>;
-        query_params : Map.Map<Text, Text>;
-    };
-
-    public func get_endpoint_params_cache(endpoint_record : EndpointRecord) : EndpointParamsCache {
-        let endpoint_params_cache : EndpointParamsCache = {
-            request_headers = Map.new();
-            response_headers = Map.new();
-            query_params = Map.new();
-        };
-
-        for ((name, value) in endpoint_record.request_headers.vals()) {
-            ignore Map.put(endpoint_params_cache.request_headers, Map.thash, name, value);
-        };
-
-        for ((name, value) in endpoint_record.response_headers.vals()) {
-            ignore Map.put(endpoint_params_cache.response_headers, Map.thash, name, value);
-        };
-
-        for ((name, value) in endpoint_record.query_params.vals()) {
-            ignore Map.put(endpoint_params_cache.query_params, Map.thash, name, value);
-        };
-
-        endpoint_params_cache;
-    };
-
-    public func get_metadata_index_from_endpoint(ct : StableStore, endpoint_record : EndpointRecord) : ?GetMetadataResponse {
-
-        let endpoints_map = switch (Map.get(ct.metadata_map, thash, endpoint_record.url)) {
-            case (?split_endpoints) if (endpoint_record.is_fallback_path) {
-                split_endpoints.fallback_endpoints;
-            } else {
-                split_endpoints.endpoints;
-            };
-            case (null) return null;
-        };
-
-        let endpoint_params_cache = get_endpoint_params_cache(endpoint_record);
-
-        let buffer = Buffer.Buffer<(Text, Serde.Candid)>(3);
-        // first check for no certification hash (occurs when only the body is certified)
-        buffer.add((IC_CERT_BODY, #Blob(endpoint_record.hash)));
-
-        let no_certification_hash = (Serde.Candid.repIndyHash(#Record(Buffer.toArray(buffer))));
-
-        switch (Map.get(endpoints_map, bhash, no_certification_hash)) {
-            case (?vec) {
-                let opt_index = get_metadata_index_from_vector(endpoint_record, vec, endpoint_params_cache);
-                switch (opt_index) {
-                    case (?(index)) return ?({
-                        endpoints_map;
-                        endpoint_unique_key = no_certification_hash;
-                        endpoint_variants = vec;
-                        index;
-                    });
-                    case (null) {};
-                };
-            };
-            case (null) {};
-        };
-
-        // if empty, check for only response certification
-
-        buffer.add((IC_CERT_STATUS, #Nat(Nat16.toNat(endpoint_record.status))));
-        let no_request_certification_hash = (Serde.Candid.repIndyHash(#Record(Buffer.toArray(buffer))));
-
-        switch (Map.get(endpoints_map, bhash, no_request_certification_hash)) {
-            case (?vec) {
-                let opt_index = get_metadata_index_from_vector(endpoint_record, vec, endpoint_params_cache);
-                switch (opt_index) {
-                    case (?(index)) return ?({
-                        endpoints_map;
-                        endpoint_unique_key = no_request_certification_hash;
-                        endpoint_variants = vec;
-                        index;
-                    });
-                    case (null) {};
-                };
-            };
-            case (null) {};
-        };
-
-        // if empty, check for full certification
-
-        buffer.add((IC_CERT_METHOD, #Text(endpoint_record.method)));
-        let unique_http_hash = (Serde.Candid.repIndyHash(#Record(Buffer.toArray(buffer))));
-
-        switch (Map.get(endpoints_map, bhash, unique_http_hash)) {
-            case (?vec) {
-                let opt_index = get_metadata_index_from_vector(endpoint_record, vec, endpoint_params_cache);
-                switch (opt_index) {
-                    case (?(index)) return ?({
-                        endpoints_map;
-                        endpoint_unique_key = unique_http_hash;
-                        endpoint_variants = vec;
-                        index;
-                    });
-                    case (null) {};
-                };
-            };
-            case (null) {};
-        };
-
-        return null;
-
-    };
-
-    func map_contains_all(haystack : Map<Text, Text>, needles : [(Text, Text)]) : Bool {
-
-        for ((k, v) in needles.vals()) {
-            if (Map.get(haystack, thash, k) != ?v) {
-                return false;
-            };
-        };
-
-        return true;
-
-    };
-
-    /// Returns the index of the metadata with the best matching endpoint record.
-    public func get_metadata_index_from_vector(endpoint_record : EndpointRecord, metadata_array : Vector<Metadata>, endpoint_params_cache : EndpointParamsCache) : ?(Nat) {
-
-        let endpoint_total_params = endpoint_record.request_headers.size() + endpoint_record.response_headers.size() + endpoint_record.query_params.size();
-
-        var opt_best_match : ?(Nat, Nat) = null;
-
-        var i = 0;
-        while (i < Vector.size(metadata_array)) {
-            let metadata = Vector.get(metadata_array, i);
-            var check = true;
-
-            check := check and map_contains_all(endpoint_params_cache.request_headers, metadata.endpoint.request_headers);
-            check := check and map_contains_all(endpoint_params_cache.response_headers, metadata.endpoint.response_headers);
-            check := check and map_contains_all(endpoint_params_cache.query_params, metadata.endpoint.query_params);
-
-            let curr_total_params = metadata.endpoint.request_headers.size() + metadata.endpoint.response_headers.size() + metadata.endpoint.query_params.size();
-
-            if (check) switch (opt_best_match) {
-                case (null) {
-                    opt_best_match := ?(i, curr_total_params);
-                };
-                case (?(_best_match_index, best_match_total_params)) {
-                    let curr_diff = Int.abs(curr_total_params - endpoint_total_params);
-                    let best_match_diff = Int.abs(best_match_total_params - endpoint_total_params);
-
-                    if (curr_diff < best_match_diff) {
-                        opt_best_match := ?(i, curr_total_params);
-                    };
-                };
-            };
-
-            i += 1;
-        };
-
-        switch (opt_best_match) {
-            case (?(i, _)) ?(i);
-            case (null) null;
-        };
-
-    };
-
-    func base64(data : Blob) : Text {
-        let res = Base64.StdEncoding.encode(Blob.toArray(data));
-        let ?utf8 = Text.decodeUtf8(Blob.fromArray(res)) else Debug.trap("base64 encoding failed");
-        utf8;
-    };
-
-    public module MerkleTreeOps {
-        type Path = MerkleTree.Path;
-        type Value = MerkleTree.Value;
-        type Key = MerkleTree.Key;
-        type Hash = MerkleTree.Hash;
-        type Witness = MerkleTree.Witness;
-
-        public func put(ct : StableStore, ks : Path, v : Value) {
-            ct.tree := MerkleTree.put(ct.tree, ks, v);
-        };
-
-        public func delete(ct : StableStore, ks : Path) {
-            ct.tree := MerkleTree.delete(ct.tree, ks);
-        };
-
-        public func lookup(ct : StableStore, ks : Path) : ?Value {
-            MerkleTree.lookup(ct.tree, ks);
-        };
-
-        public func labelsAt(ct : StableStore, ks : Path) : Iter.Iter<Key> {
-            MerkleTree.labelsAt(ct.tree, ks);
-        };
-
-        public func treeHash(ct : StableStore) : Hash {
-            MerkleTree.treeHash(ct.tree);
-        };
-
-        public func setCertifiedData(ct : StableStore) {
-            CertifiedData.set(MerkleTreeOps.treeHash(ct));
-        };
-
-        public func reveal(ct : StableStore, path : Path) : Witness {
-            MerkleTree.reveal(ct.tree, path);
-        };
-
-        public func reveals(ct : StableStore, paths : Iter.Iter<Path>) : Witness {
-            MerkleTree.reveals(ct.tree, paths);
-        };
-
-        public func encodeWitness(w : Witness) : Blob {
-            MerkleTree.encodeWitness(w);
-        };
+    public func get_metadata_index_from_vector(endpoint_record : EndpointRecord, metadata_array : Vector<Metadata>, endpoint_params_cache : Base.EndpointParamsCache) : ?(Nat) {
+        Base.get_metadata_index_from_vector(endpoint_record, metadata_array, endpoint_params_cache);
     };
 
 };

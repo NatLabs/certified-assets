@@ -12,14 +12,14 @@ func get_endpoint(url : Text, is_fallback : Bool) : CertifiedAssets.Endpoint {
     return CertifiedAssets.Endpoint(url, ?content).response_header("Content-Type", "text/html").no_request_certification().is_fallback_path(is_fallback);
 };
 
-func certify(ct : CertifiedAssets.StableStore, url : Text, is_fallback : Bool) {
+func certify(ct : CertifiedAssets.VersionedStableStore, url : Text, is_fallback : Bool) {
     let endpoint = get_endpoint(url, is_fallback);
 
     CertifiedAssets.certify(ct, endpoint);
 
 };
 
-func verify_expr_path(ct : CertifiedAssets.StableStore, (url, is_fallback) : (Text, Bool), expr_path : [Text]) : Bool {
+func verify_expr_path(ct : CertifiedAssets.VersionedStableStore, (url, is_fallback) : (Text, Bool), expr_path : [Text]) : Bool {
 
     let endpoint = get_endpoint(url, is_fallback);
 

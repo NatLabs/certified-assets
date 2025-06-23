@@ -10,6 +10,8 @@ import Vector "mo:vector";
 
 import EndpointModule "Endpoint";
 import Stable "Stable";
+import Base "Base";
+import Migrations "Migrations";
 
 module {
     type Buffer<A> = Buffer.Buffer<A>;
@@ -23,6 +25,7 @@ module {
     public type Header = Stable.Header;
 
     public type StableStore = Stable.StableStore;
+    public type VersionedStableStore = Stable.VersionedStableStore;
     public type Metadata = Stable.Metadata;
     public type MetadataMap = Stable.MetadataMap;
 
@@ -42,6 +45,7 @@ module {
     public let {
         get_response_hash;
         get_request_hash;
+        get_internal_state;
         get_ic_certificate_expression;
         encode_text_expr_path;
         get_text_expr_path;
@@ -56,7 +60,7 @@ module {
     /// let cert_store = CertifiedAssets.init_stable_store(null);
     /// let certs = CertifiedAssets.CertifiedAssets(cert_store);
     /// ```
-    public func init_stable_store(opt_options : ?Settings) : StableStore = Stable.init_stable_store(opt_options);
+    public func init_stable_store(opt_options : ?Settings) : VersionedStableStore = Stable.init_stable_store(opt_options);
 
     /// The implementation of the IC's Response Verification version 2.
     ///
@@ -67,35 +71,35 @@ module {
     /// let certs = CertifiedAssets.CertifiedAssets(cert_store);
     /// ```
     ///
-    public class CertifiedAssets(stable_store : StableStore) = self {
+    public class CertifiedAssets(stable_store : VersionedStableStore) = self {
 
-        let internal : StableStore = stable_store;
+        let internal : StableStore = Migrations.get_current_state(stable_store);
 
         /// Certify a given endpoint.
-        public func certify(endpoint : Endpoint) = Stable.certify(internal, endpoint);
+        public func certify(endpoint : Endpoint) = Base.certify(internal, endpoint);
 
         /// Certify a given endpoint record.
-        public func certify_record(endpoint_record : EndpointRecord) = Stable.certify_record(internal, endpoint_record);
+        public func certify_record(endpoint_record : EndpointRecord) = Base.certify_record(internal, endpoint_record);
 
         /// Remove a certified EndpointModule.
-        public func remove(endpoint : Endpoint) = Stable.remove(internal, endpoint);
+        public func remove(endpoint : Endpoint) = Base.remove(internal, endpoint);
 
         /// Remove a certified EndpointRecord.
-        public func remove_record(endpoint_record : EndpointRecord) = Stable.remove_record(internal, endpoint_record);
+        public func remove_record(endpoint_record : EndpointRecord) = Base.remove_record(internal, endpoint_record);
 
         /// Removes all the certified endpoints that match the given URL.
-        public func remove_all(url : Text) = Stable.remove_all(internal, url);
+        public func remove_all(url : Text) = Base.remove_all(internal, url);
 
         /// Get all certified endpoints.
-        public func endpoints() : Iter<EndpointRecord> = Stable.endpoints(internal);
+        public func endpoints() : Iter<EndpointRecord> = Base.endpoints(internal);
 
         /// Clear all certified endpoints.
-        public func clear() = Stable.clear(internal);
+        public func clear() = Base.clear(internal);
 
         /// Modifies a given response by adding the certificate headers.
         /// This only works if the endpoint has already been certified.
         public func get_certified_response(req : HttpTypes.Request, res : HttpTypes.Response, response_hash : ?Blob) : Result<HttpTypes.Response, Text> {
-            Stable.get_certified_response(internal, req, res, response_hash);
+            Base.get_certified_response(internal, req, res, response_hash);
         };
 
         /// Get the certificate for a given request.
@@ -117,13 +121,13 @@ module {
         /// };
         /// ```
         public func get_certificate(req : HttpTypes.Request, res : HttpTypes.Response, response_hash : ?Blob) : Result<[HttpTypes.Header], Text> {
-            Stable.get_certificate(internal, req, res, response_hash);
+            Base.get_certificate(internal, req, res, response_hash);
         };
 
         /// Retrieves the encoded certificate and tree based on the given keys.
         /// If keys are set to `null`, the entire tree is returned.
         public func get_certified_tree(keys : ?[Text]) : Result<CertifiedTree, Text> {
-            Stable.get_certified_tree(internal, keys);
+            Base.get_certified_tree(internal, keys);
         };
 
         /// Gets the fallback certificate for an endpoint that has not been certified.
@@ -135,16 +139,16 @@ module {
         /// - **response_hash** - Optional hash of the response body.
         ///
         public func get_fallback_certificate(req : HttpTypes.Request, fallback_path : Text, res : HttpTypes.Response, response_hash : ?Blob) : Result<[HttpTypes.Header], Text> {
-            Stable.get_fallback_certificate(internal, req, fallback_path, res, response_hash);
+            Base.get_fallback_certificate(internal, req, fallback_path, res, response_hash);
         };
 
         public func get_fallback_response(req : HttpTypes.Request, fallback_path : Text, res : HttpTypes.Response, response_hash : ?Blob) : Result<HttpTypes.Response, Text> {
-            Stable.get_fallback_response(internal, req, fallback_path, res, response_hash);
+            Base.get_fallback_response(internal, req, fallback_path, res, response_hash);
         };
 
         /// Gets the fallback index.html file with the closest matching prefix for the given path that has a certificate associated with it.
         public func get_fallback_path(path : Text) : ?Text {
-            Stable.get_fallback_path(internal, path);
+            Base.get_fallback_path(internal, path);
         };
     };
 };
