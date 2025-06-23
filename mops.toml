@@ -22,6 +22,7 @@ test = "2.0.0"
 bench = "1.0.0"
 fuzz = "0.2.1"
 itertools = "0.2.2"
+certified-assets-v0_5_1 = "https://github.com/NatLabs/certified-assets#v0.5.1@9ae316b8ec09a1e6d9ea1770cd0980d36297f74b"
 
 [toolchain]
 wasmtime = "24.0.0"
