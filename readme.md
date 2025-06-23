@@ -17,6 +17,9 @@ A library designed to certify assets served via HTTP on the Internet Computer. T
 mops install certified-assets
 ```
 
+> Requires `moc` v0.14.9 or later.
+> use `mops toolchain use moc 0.14.9` to set the toolchain version.
+
 ### Usage
 
 To begin using Certified Assets, import the module into your project:
@@ -38,7 +41,7 @@ import CertifiedAssets "mo:certified-assets/Stable";
 - Creates a persistent instance that remains stable through canister upgrades
 
 ```motoko
-    stable let cert_store = CertifiedAssets.init_stable_store();
+    stable let cert_store = CertifiedAssets.init_stable_store(null);
     let certs = CertifiedAssets.CertifiedAssets(?cert_store);
 ```
 
@@ -142,7 +145,7 @@ Once again, you can include the hash of the data when retrieving the certified r
 
 ### Fallback index.html files
 
-<!-- A fallback is any prefix in the path of the requested file that can be used to serve a default index.html file. -->
+> A **fallback** is any prefix in the path of the requested file that serves a default file, in the case the requested file is not found.
 
 Asset certification V2 allows you to fallback to a previously certified fallback endpoint if the requested file does not exist.
 Fallbacks only work if there is a certified fallback endpoint that is a prefix of the requested file path.
@@ -196,22 +199,19 @@ For example, if the requested file is `/path/to/file.txt`, valid fallback paths 
 
 ### Unit tests
 
+- To use the CertifiedAssets library in your own tests you need to enable the `unit_test_mode` flag when creating the stable store:
+```motoko
+    stable let cert_store = CertifiedAssets.init_stable_store(?{unit_test_mode = ?true});
+    let certs = CertifiedAssets.CertifiedAssets(?cert_store);
+```
+
+> Note that when this flag is set, the library will not use any of the methods enabled by the ic replica, such as `Time.now()`, `await Random.blob()`, or `CertifiedData.setCertifiedData()`. This is to ensure that the library can be compiled by the `moc` motoko compiler for unit tests without requiring a running replica. As a result, you would not be able to verify the validity of the certificates generated in this mode, but you can still test the logic of your code that uses the library.
+
 - Install [mops](https://docs.mops.one/quick-start)
-- Run the following command in your project directory:
+- Run the following command in the project's root directory:
 
 ```bash
 mops test
-```
-
-### Replica Tests
-
-- Install zx with `npm install -g zx`
-- Install dfinity's [`idl2json` package](https://github.com/dfinity/idl2json?tab=readme-ov-file#with-cargo-install)
-- Run the following commands:
-
-```bash
-    dfx start --background
-    zx -i ./z-scripts/canister-tests.mjs
 ```
 
 ## Limitations
@@ -220,5 +220,5 @@ mops test
 
 ## Credits & References
 
-- [Response Verification Standard](https://github.com/dfinity/interface-spec/blob/master/spec/http-gateway-protocol-spec.md#response-verification)
+- [Response Verification Standard](https://github.com/dfinity/portal/blob/master/docs/references/http-gateway-protocol-spec.md#response-verification)
 - Libraries: [ic-certification](https://github.com/nomeata/ic-certification), [certified-http](https://github.com/infu/certified-http)

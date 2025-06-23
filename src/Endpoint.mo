@@ -124,14 +124,14 @@ module {
 
         /// Adds a query parameter to the endpoint.
         public func query_param(field : Text, value : Text) : Endpoint {
-            _queries.add((field, value));
+            _queries.add((Text.toLowercase(field), value));
             return self;
         };
 
         /// Adds multiple query parameters to the endpoint.
         public func query_params(params : [(Text, Text)]) : Endpoint {
             for ((field, value) in params.vals()) {
-                _queries.add((field, value));
+                _queries.add((Text.toLowercase(field), value));
             };
             return self;
         };
@@ -191,6 +191,7 @@ module {
                 no_request_certification = _no_request_certification;
                 is_fallback_path = _is_fallback_path;
             };
+
             record;
         };
     };
